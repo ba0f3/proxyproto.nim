@@ -3,8 +3,8 @@ from net import IpAddress, parseIPAddress
 
 const v2sig* = "\c\n\c\n\x00\c\nQUIT\n"
 
-#proc c_memchr(s: pointer, c: cint, n: csize): pointer {.importc: "memchr", header: "<string.h>".}
 proc c_memcmp(a, b: pointer, size: csize): cint {.importc: "memcmp", header: "<string.h>", noSideEffect.}
+
 type
   HeaderV2_IPV4 = object
     src_addr: uint32
@@ -37,19 +37,6 @@ type
   Header = object {.union.}
     v1: array[108, char]
     v2: HeaderV2
-
-
-type
-  ConnectionState = enum
-    NEW
-    READY
-    CLOSED
-
-  Connection = object
-    State: ConnectionState
-    From: SockAddr
-    To: SockAddr
-
 
 template done() =
   ##  we need to consume the appropriate amount of data from the socket
@@ -132,11 +119,8 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     ##  Wrong protocol
     return -1
 
-var
-  acceptHook: Hook
-
+var acceptHook: Hook
 proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle =
-
   acceptHook.remove()
   result = accept(a1, a2, a3)
   acceptHook.install()
@@ -146,10 +130,9 @@ proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandl
       result = SocketHandle(-1)
   return result
 
-proc main() = 
+proc main() =
   var ret: int
   echo "[PROXY] initializing"
-
   acceptHook = initHook(accept, MY_accept, 0)
   ret = acceptHook.install()
   if ret != 0:

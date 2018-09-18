@@ -38,10 +38,14 @@ Usage
 -----
 
 Just add `src/libproxy.so` to `LD_PRELOAD`
-```shell
-LD_PRELOAD=src/libproxy.so nc -l -p 4444
-```
 
+```shell
+$LD_PRELOAD=./src/libproxy.so nc -vkl -p 4444
+[PROXY] initializing
+[PROXY] hook accept OK
+listening on [any] 4444 ...
+
+```
 
 Donate
 -----
