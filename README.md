@@ -1,7 +1,9 @@
-LIBPROXY
+PROXYPROTO
 -------
 
-libproxy is a lightweight library that helps aged programs can deal with proxy-protocol.
+proxyproto is a lightweight library that helps aged programs deal with proxy-protocol. It supports both IPv4 and IPv6.
+
+Works on Linux and macOS
 
 Why?
 ----
@@ -9,38 +11,31 @@ Why?
 There are many aged programs that dont support proxy-protocol (esp. closed source programs).
 When they are running behind a load-balancer or reserve proxy, it's hard to preserve source IP address.
 
-How LIBPROXY works?
+How PROXYPROTO works?
 -------------------
 
-libproxy intercep the `accept()` proc, and waits for new imcoming connection and listens for proxy-protocol header from upstream proxy (ie HAProxy, NGINX..)
+proxyproto intercep the `accept()` proc, and waits for new imcoming connection and listens for proxy-protocol header from upstream proxy (ie HAProxy, NGINX..)
 
-Once header read, libproxy replace source ip w/ ip provided by upstream proxy.
-
-Requirements
-------------
-
-- Nim compiler
-- Nimble package manager
-- Subhook package (`nimble install subhook`)
+Once header read, proxyproto replace source ip w/ ip provided by upstream proxy.
 
 
 Installation
 ------------
 
 ```shell
-git clone --depth=1 https://github.com/ba0f3/libproxy.nim.git libproxy
-cd libproxy
-nim c -d:release src/proxy
+git clone --depth=1 https://github.com/ba0f3/proxyproto.nim.git proxyproto
+cd proxyproto
+nim c -d:release src/proxyproto
 
 ```
 
 Usage
 -----
 
-Just add `src/libproxy.so` to `LD_PRELOAD`
+Just add `src/libproxyproto.so` to `LD_PRELOAD`
 
 ```shell
-$LD_PRELOAD=./src/libproxy.so nc -vkl -p 4444
+$LD_PRELOAD=./src/libproxyproto.so nc -vkl -p 4444
 [PROXY] initializing
 [PROXY] hook accept OK
 listening on [any] 4444 ...
