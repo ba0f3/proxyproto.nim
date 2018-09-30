@@ -1,5 +1,7 @@
-import posix, subhook, strutils
+import posix, strutils
 from net import IpAddress, parseIPAddress
+from dynlib import LibHandle, symAddr
+
 
 const v2sig* = "\c\n\c\n\x00\c\nQUIT\n"
 
@@ -50,7 +52,7 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     size: int
     hdr: Header
 
-  echo "[PROXY] connection 0x", toHex(fd), " handshaking"
+  echo "[PROXY] connection 0x", toHex(fd.int), " handshaking"
 
   while true:
     result = recv(fd, addr hdr, sizeof(hdr), MSG_PEEK)
@@ -69,14 +71,14 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
       case hdr.v2.fam
       of 0x11: # TCPv4
         var src: Sockaddr_in
-        src.sin_family = AF_INET
+        src.sin_family = AF_INET.TSa_Family
         src.sin_addr.s_addr = hdr.v2.address.ip4.src_addr
         src.sin_port = hdr.v2.address.ip4.src_port
         copyMem(sa, addr src, sl[])
         done()
       of 0x21: # TCPv6
         var src6: Sockaddr_in6
-        src6.sin6_family = AF_INET6
+        src6.sin6_family = AF_INET6.TSa_Family
         copyMem(addr src6.sin6_addr, addr hdr.v2.address.ip6.src_addr, 16)
         src6.sin6_port = hdr.v2.address.ip6.src_port
         copyMem(sa, addr src6, sl[])
@@ -99,7 +101,7 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
       var
         src: Sockaddr_in
         ip = parseIPAddress(params[2])
-      src.sin_family = AF_INET
+      src.sin_family = AF_INET.TSa_Family
       src.sin_addr.s_addr = cast[uint32](ip.address_v4)
       src.sin_port = htons(parseInt(params[4]).uint16)
       copyMem(sa, addr src, sl[])
@@ -108,7 +110,7 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
       var
         src6: Sockaddr_in6
         ip = parseIPAddress(params[2])
-      src6.sin6_family = AF_INET6
+      src6.sin6_family = AF_INET6.TSa_Family
       copyMem(addr src6.sin6_addr, addr ip.address_v6, 16)
       src6.sin6_port = htons(parseInt(params[4]).uint16)
       copyMem(sa, addr src6, sl[])
@@ -119,26 +121,30 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     ##  Wrong protocol
     return -1
 
-var acceptHook: Hook
-proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle =
-  acceptHook.remove()
-  result = accept(a1, a2, a3)
-  acceptHook.install()
+
+type AcceptProc = proc(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.cdecl.}
+var
+  RTLD_NEXT {.importc: "RTLD_NEXT", header: "<dlfcn.h>".}: LibHandle
+  real_accept: AcceptProc
+
+proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
+  result = real_accept(a1, a2, a3)
   if result.int != -1:
     if handshake(result, a2, a3) <= 0:
-      echo "[PROXY] connection 0x", toHex(result), " invalid proxy-protocol header"
+      echo "[PROXY] connection 0x", toHex(result.int), " invalid proxy-protocol header"
       result = SocketHandle(-1)
   return result
 
+
 proc main() =
-  var ret: int
   echo "[PROXY] initializing"
-  acceptHook = initHook(accept, MY_accept, 0)
-  ret = acceptHook.install()
-  if ret != 0:
-    quit "[PROXY] hook accept failed " & $ret
-  else:
-    echo "[PROXY] hook accept OK"
+
+  let accept_ptr = symAddr(RTLD_NEXT, "accept")
+  if accept_ptr == nil:
+    quit "[PROXY] cannot find accept proc"
+
+  real_accept = cast[AcceptProc](accept_ptr)
+  echo "[PROXY] hook accept OK"
 
 when isMainModule:
   main()

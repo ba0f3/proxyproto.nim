@@ -8,5 +8,3 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 0.18.1"
-requires "subhook 0.5.0"
-
