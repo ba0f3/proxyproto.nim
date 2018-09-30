@@ -26,13 +26,17 @@ Installation
 git clone --depth=1 https://github.com/ba0f3/proxyproto.nim.git proxyproto
 cd proxyproto
 nim c -d:release src/proxyproto
-
 ```
 
 Usage
 -----
 
-Just add `src/libproxyproto.so` to `LD_PRELOAD`
+Use directly inside a nim program that accept incoming connections
+```nim
+import proxyproto
+```
+
+For existing programs, use LD_PRELOAD
 
 ```shell
 $LD_PRELOAD=./src/libproxyproto.so nc -vkl -p 4444

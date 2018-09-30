@@ -52,8 +52,6 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     size: int
     hdr: Header
 
-  echo "[PROXY] connection 0x", toHex(fd.int), " handshaking"
-
   while true:
     result = recv(fd, addr hdr, sizeof(hdr), MSG_PEEK)
     if not (result == -1 and errno == EINTR):
@@ -127,7 +125,7 @@ var
   RTLD_NEXT {.importc: "RTLD_NEXT", header: "<dlfcn.h>".}: LibHandle
   real_accept: AcceptProc
 
-proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
+proc pp_accept*(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
   result = real_accept(a1, a2, a3)
   if result.int != -1:
     if handshake(result, a2, a3) <= 0:
@@ -136,9 +134,7 @@ proc MY_accept(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandl
   return result
 
 
-proc main() =
-  echo "[PROXY] initializing"
-
+proc init() =
   let accept_ptr = symAddr(RTLD_NEXT, "accept")
   if accept_ptr == nil:
     quit "[PROXY] cannot find accept proc"
@@ -146,5 +142,4 @@ proc main() =
   real_accept = cast[AcceptProc](accept_ptr)
   echo "[PROXY] hook accept OK"
 
-when isMainModule:
-  main()
+init()
