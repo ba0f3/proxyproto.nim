@@ -8,7 +8,7 @@ const v2sig* = "\c\n\c\n\x00\c\nQUIT\n"
 proc c_memcmp(a, b: pointer, size: csize): cint {.importc: "memcmp", header: "<string.h>", noSideEffect.}
 
 type
-  HeaderV2_IPV4 = object
+  HeaderV2_IPV4 {.union.} = object
     src_addr: uint32
     dst_addr: uint32
     src_port: uint16
@@ -24,7 +24,7 @@ type
     src_addr: array[108, uint8]
     dst_addr: array[108, uint8]
 
-  HeaderV2_Addr = object {.union.}
+  HeaderV2_Addr {.union.} = object
     ip4: HeaderV2_IPV4
     ip6: HeaderV2_IPV6
     unx: HeaderV2_UNIX
@@ -36,7 +36,7 @@ type
     length: uint16
     address: HeaderV2_Addr
 
-  Header = object {.union.}
+  Header {.union.} = object
     v1: array[108, char]
     v2: HeaderV2
 
@@ -47,16 +47,15 @@ template done() =
     if not (result == -1 and errno == EINTR): break
     return if (result >= 0): 1 else: -1
 
-proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
+proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
   var
     size: int
     hdr: Header
 
   while true:
-    result = recv(fd, addr hdr, sizeof(hdr), MSG_PEEK)
+    result = recv(fd, addr hdr, sizeof(hdr), 0)
     if not (result == -1 and errno == EINTR):
       break
-
   if result == -1:
     return if (errno == EAGAIN): 0 else: -1
 
@@ -92,9 +91,9 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     if backslash_c == -1 or hdr.v1[backslash_c + 1] != '\n':
       return -1
     hdr.v1[backslash_c] = '\0'
-    let buffer = $cast[cstring](addr hdr.v1)
-    echo buffer
-    let params = splitWhitespace(buffer)
+    let
+      buffer = $cast[cstring](addr hdr.v1)
+      params = splitWhitespace(buffer)
     if params[1] == "TCP4":
       var
         src: Sockaddr_in
@@ -119,27 +118,22 @@ proc handshake(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
     ##  Wrong protocol
     return -1
 
+when isMainModule:
+  type AcceptProc = proc(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.cdecl.}
+  var
+    RTLD_NEXT {.importc: "RTLD_NEXT", header: "<dlfcn.h>".}: LibHandle
+    real_accept: AcceptProc
 
-type AcceptProc = proc(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.cdecl.}
-var
-  RTLD_NEXT {.importc: "RTLD_NEXT", header: "<dlfcn.h>".}: LibHandle
-  real_accept: AcceptProc
+  proc pp_accept*(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
+    result = real_accept(a1, a2, a3)
+    if result.int != -1:
+      if pp_handshake(result, a2, a3) <= 0:
+        echo "[PROXY] connection 0x", toHex(result.int), " invalid proxy-protocol header"
+        result = SocketHandle(-1)
 
-proc pp_accept*(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
-  result = real_accept(a1, a2, a3)
-  if result.int != -1:
-    if handshake(result, a2, a3) <= 0:
-      echo "[PROXY] connection 0x", toHex(result.int), " invalid proxy-protocol header"
-      result = SocketHandle(-1)
-  return result
-
-
-proc init() =
   let accept_ptr = symAddr(RTLD_NEXT, "accept")
   if accept_ptr == nil:
     quit "[PROXY] cannot find accept proc"
 
   real_accept = cast[AcceptProc](accept_ptr)
   echo "[PROXY] hook accept OK"
-
-init()
