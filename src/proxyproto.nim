@@ -3,7 +3,9 @@ from net import IpAddress, parseIPAddress
 from dynlib import LibHandle, symAddr
 
 
-const v2sig* = "\c\n\c\n\x00\c\nQUIT\n"
+const
+  v1sig = "PROXY".cstring
+  v2sig = "\c\n\c\n\x00\c\nQUIT\n"
 
 proc c_memcmp(a, b: pointer, size: csize): cint {.importc: "memcmp", header: "<string.h>", noSideEffect.}
 
@@ -40,14 +42,13 @@ type
     v1: array[108, char]
     v2: HeaderV2
 
-template done() =
-  ##  we need to consume the appropriate amount of data from the socket
-  while true:
-    result = recv(fd, addr(hdr), size, 0)
-    if not (result == -1 and errno == EINTR): break
-    return if (result >= 0): 1 else: -1
+  ParseStep = enum
+    SRC_IP
+    DST_IP
+    SRC_PORT
+    DST_PORT
 
-proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
+proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int  =
   var
     size: int
     hdr: Header
@@ -72,47 +73,83 @@ proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int =
         src.sin_addr.s_addr = hdr.v2.address.ip4.src_addr
         src.sin_port = hdr.v2.address.ip4.src_port
         copyMem(sa, addr src, sl[])
-        done()
       of 0x21: # TCPv6
         var src6: Sockaddr_in6
         src6.sin6_family = AF_INET6.TSa_Family
         copyMem(addr src6.sin6_addr, addr hdr.v2.address.ip6.src_addr, 16)
         src6.sin6_port = hdr.v2.address.ip6.src_port
         copyMem(sa, addr src6, sl[])
-        done()
       else:
-        discard
+        return -1
     of 0x0: # LOCAL command
-      discard
+      return -1
     else:
       return -1
-  elif result >= 8 and hdr.v1[0..4] == @['P', 'R', 'O', 'X', 'Y']:
-    let backslash_c = hdr.v1.find('\c')
-    if backslash_c == -1 or hdr.v1[backslash_c + 1] != '\n':
+  elif result >= 8 and c_memcmp(addr hdr, v1sig, 5) == 0:
+    let backslash_r = hdr.v1.find('\r')
+    if backslash_r == -1 or hdr.v1[backslash_r + 1] != '\n':
       return -1
-    hdr.v1[backslash_c] = '\0'
-    let
-      buffer = $cast[cstring](addr hdr.v1)
-      params = splitWhitespace(buffer)
-    if params[1] == "TCP4":
-      var
-        src: Sockaddr_in
-        ip = parseIPAddress(params[2])
+    hdr.v1[backslash_r] = '\0'
+    var
+      tmp: array[40, char]
+      step = SRC_IP
+      idx = 0
+    zeroMem(addr tmp, sizeof(tmp))
+    if hdr.v1[9] == '4':
+      var src: Sockaddr_in
       src.sin_family = AF_INET.TSa_Family
-      src.sin_addr.s_addr = cast[uint32](ip.address_v4)
-      src.sin_port = htons(parseInt(params[4]).uint16)
-      copyMem(sa, addr src, sl[])
-      return buffer.len
-    elif params[1] == "TCP6":
-      var
-        src6: Sockaddr_in6
-        ip = parseIPAddress(params[2])
+      for i in 11..backslash_r:
+        var c = hdr.v1[i]
+        if c == ' ' or c == '\0':
+          case step
+          of SRC_IP:
+            step = DST_IP
+            src.sin_addr.s_addr = cast[uint32](parseIPAddress($cast[cstring](addr tmp)).address_v4)
+          of DST_IP:
+            # temporary ignore destination ip address
+            step = SRC_PORT
+          of SRC_PORT:
+            step = DST_PORT
+            src.sin_port = htons(parseInt($cast[cstring](addr tmp)).uint16)
+            copyMem(sa, addr src, sl[])
+            return backslash_r
+          of DST_PORT:
+            # temporary ignore destination port
+            break
+          zeroMem(addr tmp, sizeof(tmp))
+          idx = 0
+        else:
+          tmp[idx] = c
+          inc(idx)
+    elif hdr.v1[0] == '6':
+      var src6: Sockaddr_in6
       src6.sin6_family = AF_INET6.TSa_Family
-      copyMem(addr src6.sin6_addr, addr ip.address_v6, 16)
-      src6.sin6_port = htons(parseInt(params[4]).uint16)
-      copyMem(sa, addr src6, sl[])
-      return buffer.len
+      for i in 11..backslash_r:
+        var c = hdr.v1[i]
+        if c == ' ' or c == '\0':
+          case step
+          of SRC_IP:
+            step = DST_IP
+            var ip = parseIPAddress($cast[cstring](addr tmp))
+            copyMem(addr src6.sin6_addr, addr ip.address_v6, 16)
+          of DST_IP:
+            # temporary ignore destination ip address
+            step = SRC_PORT
+          of SRC_PORT:
+            step = DST_PORT
+            src6.sin6_port = htons(parseInt($cast[cstring](addr tmp)).uint16)
+            copyMem(sa, addr src6, sl[])
+            return backslash_r
+          of DST_PORT:
+            # temporary ignore destination port
+            break
+          zeroMem(addr tmp, sizeof(tmp))
+          idx = 0
+        else:
+          tmp[idx] = c
+          inc(idx)
     else:
+      # not supported protocol
       return -1
   else:
     ##  Wrong protocol
