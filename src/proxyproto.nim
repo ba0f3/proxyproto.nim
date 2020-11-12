@@ -1,4 +1,5 @@
-import posix, strutils
+import posix
+from strutils import parseInt
 from net import IpAddress, parseIPAddress
 from dynlib import LibHandle, symAddr
 
@@ -165,7 +166,7 @@ when isMainModule:
     result = real_accept(a1, a2, a3)
     if result.int != -1:
       if pp_handshake(result, a2, a3) <= 0:
-        echo "[PROXY] connection 0x", toHex(result.int), " invalid proxy-protocol header"
+        echo "[PROXY] connection 0x", $result.int, " invalid proxy-protocol header"
         result = SocketHandle(-1)
 
   let accept_ptr = symAddr(RTLD_NEXT, "accept")
