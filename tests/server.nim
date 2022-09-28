@@ -9,12 +9,14 @@ proc processClient(client: AsyncSocket) {.async.} =
       slen: SockLen
       src: SockAddr_in
 
-    if getpeername(client.getFd(), cast[ptr SockAddr](addr src), addr slen) == 0:
-      echo "remote ip ", inet_ntoa(src.sin_addr)
+    #if getpeername(client.getFd(), cast[ptr SockAddr](addr src), addr slen) == 0:
+      #echo "remote ", inet_ntoa(src.sin_addr), ":", htons(src.sin_port), " : ", line
+    echo "remote ", client.getPeerAddr(), " : ", line
+
 
 proc serve() {.async.} =
   var server = newAsyncSocket()
-  server.bindAddr(Port(6001))
+  server.bindAddr(Port(4444))
   server.listen()
 
   while true:

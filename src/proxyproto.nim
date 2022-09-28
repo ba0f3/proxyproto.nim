@@ -53,13 +53,32 @@ proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int  =
     hdr: Header
     src: Sockaddr_in
     src6: Sockaddr_in6
+    tv: Timeval
+    tv_size = sizeof(tv).SockLen
+    reset_tv = false
+    flags = fcntl(fd, F_GETFL, 0)
+
+  # make sure fd is blocking
+  if (flags and O_NONBLOCK) == 0:
+    # get recv timeout, and set it if not set
+    if getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, addr tv, addr tv_size) >= 0 and tv.tv_sec.int == 0 and tv.tv_usec == 0:
+      reset_tv = true
+      tv.tv_usec = 500
+      discard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, addr tv, tv_size)
 
   while true:
-    result = recv(fd, addr hdr, sizeof(hdr), 0)
+    result = recv(fd, addr hdr, sizeof(hdr), MSG_PEEK)
     if not (result == -1 and errno == EINTR):
       break
+
   if result == -1:
-    return if (errno == EAGAIN): 0 else: -1
+    return if (errno == EAGAIN or errno == EWOULDBLOCK): 0 else: -1
+
+  # reset recv timeout
+  if reset_tv:
+    tv.tv_sec = 0.Time
+    tv.tv_usec = 0
+    discard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, addr tv, tv_size)
 
   if result >= 16 and hdr.v2.sig == v2sig and (hdr.v2.ver_cmd and 0xF0) == 0x20 and result >= 16 + ntohs(hdr.v2.length).int:
     case hdr.v2.ver_cmd and 0xF
@@ -145,22 +164,28 @@ proc pp_handshake*(fd: SocketHandle, sa: ptr SockAddr, sl: ptr Socklen): int  =
   else: #  Wrong protocol
     return -1
 
+  while true:
+    result = recv(fd, addr hdr, result, 0)
+    if not (result == -1 and errno == EINTR):
+      break
+
 when isMainModule:
-  type AcceptProc = proc(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.cdecl.}
   var
     RTLD_NEXT {.importc: "RTLD_NEXT", header: "<dlfcn.h>".}: LibHandle
-    real_accept: AcceptProc
+    sys_accept: proc(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.cdecl.}
 
   proc pp_accept*(a1: SocketHandle, a2: ptr SockAddr, a3: ptr Socklen): SocketHandle {.exportc:"accept",cdecl.} =
-    result = real_accept(a1, a2, a3)
+    result = sys_accept(a1, a2, a3)
     if result.int != -1:
       if pp_handshake(result, a2, a3) <= 0:
         echo "[PROXY] connection 0x", $result.int, " invalid proxy-protocol header"
+        discard close(result)
+        errno = ECONNABORTED
         result = SocketHandle(-1)
 
   let accept_ptr = symAddr(RTLD_NEXT, "accept")
   if accept_ptr == nil:
     quit "[PROXY] cannot find accept proc"
 
-  real_accept = cast[AcceptProc](accept_ptr)
+  sys_accept = cast[sys_accept.type](accept_ptr)
   echo "[PROXY] hook accept OK"

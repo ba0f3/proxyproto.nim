@@ -18,8 +18,14 @@ proc serve() {.async.} =
   server.listen()
 
   while true:
-    let client = await server.accept()
-    discard processClient(client)
+    var client: AsyncSocket
+    try:
+      client = await server.accept()
+    except:
+      echo "Accept error"
+    if client != nil:
+      discard processClient(client)
+
 
 asyncCheck serve()
 runForever()
